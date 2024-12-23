@@ -84,13 +84,13 @@ func scanNetwork() {
 	for ip := subnet.IP.Mask(subnet.Mask); subnet.Contains(ip); inc(ip) {
 		ipCount++
 		arp.DstProtAddress = []byte(ip.To4())
-		
+
 		buf := gopacket.NewSerializeBuffer()
 		opts := gopacket.SerializeOptions{
 			FixLengths:       true,
 			ComputeChecksums: true,
 		}
-		
+
 		gopacket.SerializeLayers(buf, opts, &eth, &arp)
 		if err := handle.WritePacketData(buf.Bytes()); err != nil {
 			log.Printf("Error sending ARP to %v: %v", ip, err)
@@ -101,7 +101,7 @@ func scanNetwork() {
 	// Read responses
 	fmt.Println("\nDiscovered devices:")
 	fmt.Println("------------------")
-	
+
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	timeout := time.After(5 * time.Second)
 	deviceCount := 0
@@ -115,7 +115,7 @@ func scanNetwork() {
 				if arp.Operation == layers.ARPReply {
 					mac := net.HardwareAddr(arp.SourceHwAddress)
 					macStr := mac.String()
-					
+
 					// Only print if we haven't seen this MAC address before
 					if !seenMACs[macStr] {
 						deviceCount++
