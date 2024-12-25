@@ -700,6 +700,37 @@ func writeCSV(data [][]string) error {
 	return nil
 }
 
+func processPacket(packet gopacket.Packet) {
+	applicationLayer := packet.ApplicationLayer()
+	if applicationLayer != nil {
+		// Check for mDNS traffic (port 5353)
+		if strings.Contains(string(applicationLayer.Payload()), "_services._dns-sd._udp.local") {
+			// Extract mDNS information
+			mdnsPayload := string(applicationLayer.Payload())
+			fmt.Println("mDNS Packet:", mdnsPayload)
+
+			// Example: Extract device name from mDNS response
+			if strings.Contains(mdnsPayload, "John's iPhone") {
+				fmt.Println("Found device:", "John's iPhone")
+			}
+		}
+
+		// Check for HTTP traffic
+		if strings.Contains(string(applicationLayer.Payload()), "HTTP/") {
+			// Extract HTTP request
+			httpRequest := string(applicationLayer.Payload())
+			fmt.Println("HTTP Request:", httpRequest)
+
+			// Extract the Host header to see the requested website
+			if strings.Contains(httpRequest, "Host:") {
+				hostLine := strings.Split(httpRequest, "Host:")[1]
+				host := strings.Split(hostLine, "\r\n")[0]
+				fmt.Println("Requested Website:", host)
+			}
+		}
+	}
+}
+
 func main() {
 	printBanner()
 	fmt.Println("Starting network scan...")
