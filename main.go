@@ -25,15 +25,16 @@ import (
 )
 
 type NetworkDevice struct {
-	IP         string
-	MAC        string
-	Vendor     string
-	OpenPorts  []int
-	Hostname   string
-	DeviceType string
-	Services   map[int]string
-	Banners    map[int]string
-	Signal     SignalInfo
+	IP             string
+	MAC            string
+	Vendor         string
+	OpenPorts      []int
+	Hostname       string
+	DeviceType     string
+	Services       map[int]string
+	Banners        map[int]string
+	Signal         SignalInfo
+	LastWebTraffic string // Field to store last web traffic
 }
 
 type SignalInfo struct {
@@ -463,6 +464,9 @@ func monitorRSSI(updateInterval time.Duration) chan SignalInfo {
 }
 
 func scanNetwork() {
+	// Initialize the devices map
+	devices := make(map[string]*NetworkDevice)
+
 	// List all network interfaces
 	interfaces, err := net.Interfaces()
 	if err != nil {
@@ -590,6 +594,7 @@ func scanNetwork() {
 			}
 
 		case packet := <-packetSource.Packets():
+			processPacket(packet, devices)
 			if arpLayer := packet.Layer(layers.LayerTypeARP); arpLayer != nil {
 				arp := arpLayer.(*layers.ARP)
 				if arp.Operation == layers.ARPReply {
@@ -639,6 +644,9 @@ func scanNetwork() {
 							fmt.Printf("  Signal: %d dBm (%s)\n",
 								device.Signal.RSSI, getSignalQuality(device.Signal.RSSI))
 							fmt.Printf("  Distance: %.1f meters\n", device.Signal.Distance)
+						}
+						if device.LastWebTraffic != "" {
+							fmt.Printf("  Last Web Traffic: %s\n", device.LastWebTraffic)
 						}
 
 						// Collect device types for CSV
@@ -700,21 +708,9 @@ func writeCSV(data [][]string) error {
 	return nil
 }
 
-func processPacket(packet gopacket.Packet) {
+func processPacket(packet gopacket.Packet, devices map[string]*NetworkDevice) {
 	applicationLayer := packet.ApplicationLayer()
 	if applicationLayer != nil {
-		// Check for mDNS traffic (port 5353)
-		if strings.Contains(string(applicationLayer.Payload()), "_services._dns-sd._udp.local") {
-			// Extract mDNS information
-			mdnsPayload := string(applicationLayer.Payload())
-			fmt.Println("mDNS Packet:", mdnsPayload)
-
-			// Example: Extract device name from mDNS response
-			if strings.Contains(mdnsPayload, "John's iPhone") {
-				fmt.Println("Found device:", "John's iPhone")
-			}
-		}
-
 		// Check for HTTP traffic
 		if strings.Contains(string(applicationLayer.Payload()), "HTTP/") {
 			// Extract HTTP request
@@ -726,6 +722,14 @@ func processPacket(packet gopacket.Packet) {
 				hostLine := strings.Split(httpRequest, "Host:")[1]
 				host := strings.Split(hostLine, "\r\n")[0]
 				fmt.Println("Requested Website:", host)
+
+				// Update the last web traffic for the corresponding device
+				for _, device := range devices {
+					if device.IP == packet.NetworkLayer().NetworkFlow().Src().String() {
+						device.LastWebTraffic = host // Store the last web traffic
+						fmt.Printf("Updated Last Web Traffic for %s: %s\n", device.IP, device.LastWebTraffic) // Debug print
+					}
+				}
 			}
 		}
 	}
