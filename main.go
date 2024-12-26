@@ -43,6 +43,15 @@ type SignalInfo struct {
 	Samples  []int
 }
 
+type TrafficData struct {
+	LastRequest  string
+	TotalBytes   int
+	RequestCount int
+	OpenPorts    []int // Field to store open ports
+}
+
+var trafficData = make(map[string]*TrafficData) // Map to store traffic data by device IP
+
 const (
 	// Environmental factor (2.0 to 4.0)
 	// 2.0 for free space
@@ -53,9 +62,6 @@ const (
 
 	// Reference RSSI at 1 meter distance (calibration value)
 	referenceRSSI = -40
-
-	// Number of samples to average
-	sampleSize = 5
 )
 
 func printBanner() {
@@ -152,19 +158,6 @@ func downloadOUIDatabase() error {
 	return nil
 }
 
-// Helper function to check if a string is hexadecimal
-func isHexString(s string) bool {
-	if len(s) != 6 {
-		return false
-	}
-	for _, char := range s {
-		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
-			return false
-		}
-	}
-	return true
-}
-
 func loadOUIDatabase() map[string]string {
 	vendors := make(map[string]string)
 
@@ -199,7 +192,7 @@ func loadOUIDatabase() map[string]string {
 	return vendors
 }
 
-func identifyService(ip string, port int) string {
+func identifyService(port int) string {
 	common := map[int]string{
 		22:    "SSH",
 		80:    "HTTP",
@@ -328,7 +321,7 @@ func scanPorts(ip string) ([]int, map[int]string, map[int]string) {
 				conn.Close()
 				mutex.Lock()
 				openPorts = append(openPorts, p)
-				services[p] = identifyService(ip, p)
+				services[p] = identifyService(p)
 				banner := grabBanner(ip, p)
 				if banner != "" {
 					banners[p] = banner
@@ -390,25 +383,6 @@ func calculateDistance(rssi int) float64 {
 	return math.Pow(10, exp)
 }
 
-func averageRSSI(samples []int) int {
-	if len(samples) == 0 {
-		return 0
-	}
-
-	sum := 0
-	for _, rssi := range samples {
-		sum += rssi
-	}
-	return sum / len(samples)
-}
-
-// First, check if we can enable monitor mode
-func enableMonitorMode(iface string) error {
-	// Use iwconfig/airmon-ng to enable monitor mode
-	cmd := exec.Command("sudo", "airmon-ng", "start", iface)
-	return cmd.Run()
-}
-
 func getRSSI() (SignalInfo, error) {
 	cmd := exec.Command("/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport", "-I")
 	output, err := cmd.Output()
@@ -464,8 +438,6 @@ func monitorRSSI(updateInterval time.Duration) chan SignalInfo {
 }
 
 func scanNetwork() {
-	// Initialize the devices map
-	devices := make(map[string]*NetworkDevice)
 
 	// List all network interfaces
 	interfaces, err := net.Interfaces()
@@ -594,7 +566,7 @@ func scanNetwork() {
 			}
 
 		case packet := <-packetSource.Packets():
-			processPacket(packet, devices)
+			processPacket(packet)
 			if arpLayer := packet.Layer(layers.LayerTypeARP); arpLayer != nil {
 				arp := arpLayer.(*layers.ARP)
 				if arp.Operation == layers.ARPReply {
@@ -708,28 +680,25 @@ func writeCSV(data [][]string) error {
 	return nil
 }
 
-func processPacket(packet gopacket.Packet, devices map[string]*NetworkDevice) {
+func processPacket(packet gopacket.Packet) {
 	applicationLayer := packet.ApplicationLayer()
 	if applicationLayer != nil {
 		// Check for HTTP traffic
 		if strings.Contains(string(applicationLayer.Payload()), "HTTP/") {
-			// Extract HTTP request
 			httpRequest := string(applicationLayer.Payload())
-			fmt.Println("HTTP Request:", httpRequest)
-
-			// Extract the Host header to see the requested website
+			// Extract relevant information (e.g., URL)
 			if strings.Contains(httpRequest, "Host:") {
 				hostLine := strings.Split(httpRequest, "Host:")[1]
 				host := strings.Split(hostLine, "\r\n")[0]
-				fmt.Println("Requested Website:", host)
-
-				// Update the last web traffic for the corresponding device
-				for _, device := range devices {
-					if device.IP == packet.NetworkLayer().NetworkFlow().Src().String() {
-						device.LastWebTraffic = host // Store the last web traffic
-						fmt.Printf("Updated Last Web Traffic for %s: %s\n", device.IP, device.LastWebTraffic) // Debug print
-					}
+				// Get the source IP address
+				ip := packet.NetworkLayer().NetworkFlow().Src().String()
+				// Update traffic data
+				if _, exists := trafficData[ip]; !exists {
+					trafficData[ip] = &TrafficData{}
 				}
+				trafficData[ip].LastRequest = host
+				trafficData[ip].RequestCount++
+				trafficData[ip].TotalBytes += len(applicationLayer.Payload())
 			}
 		}
 	}
